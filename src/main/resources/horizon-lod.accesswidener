@@ -1,0 +1,3 @@
+accessWidener v2 official
+# The chunk read the server's own loading uses: from disk or pending saves, datafixed to this version.
+accessible method net/minecraft/server/level/ChunkMap readChunk (Lnet/minecraft/world/level/ChunkPos;)Ljava/util/concurrent/CompletableFuture;

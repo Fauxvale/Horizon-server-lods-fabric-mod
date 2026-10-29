@@ -1,0 +1,20 @@
+{
+	"schemaVersion": 1,
+	"id": "horizon-lod",
+	"version": "${version}",
+	"name": "Horizon Server LODs",
+	"description": "Sends Horizon clients far terrain from the chunks this server has already generated, whatever generated them.",
+	"authors": ["Faux"],
+	"license": "MIT",
+	"environment": "*",
+	"entrypoints": {
+		"main": ["dev.faux.horizonlod.HorizonLod"]
+	},
+	"accessWidener": "horizon-lod.accesswidener",
+	"depends": {
+		"fabricloader": ">=0.20.1",
+		"minecraft": "~26.3",
+		"java": ">=25",
+		"fabric-api": "*"
+	}
+}
