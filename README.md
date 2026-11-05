@@ -69,11 +69,12 @@ Needs JDK 25.
 
 The wire format is in [PROTOCOL.md](PROTOCOL.md). The client side of far terrain is Horizon
 itself (`crates/horizon-client/src/lod_net.rs`); `faux:tick_stats` is read by Fauxclient's
-`faux_remote_lod` bundle.
+`faux_minihud_extra` bundle.
 
 ## License
 
-[MIT](LICENSE). The far-terrain column summaries (`Columns.java`) follow Horizon's `lod.rs`,
-whose MIT notice (Ludovic Marie and the Horizon contributors) is kept in the licence. Unofficial:
+[MIT](LICENSE). The far-terrain column summaries and tile replies (`Columns.java`, `Tiles.java`,
+`HorizonLod.java`, `LodPayload.java`) follow Horizon's MIT-licensed `lod.rs` and `lod_net.rs`, whose
+notice (Ludovic Marie and the Horizon contributors) is kept in the licence and in those files. Unofficial:
 not affiliated with Mojang, Microsoft or the Horizon project. Built against Minecraft and Fabric
 API, neither of which is included.

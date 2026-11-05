@@ -1,3 +1,7 @@
+/*
+ * SPDX-License-Identifier: MIT
+ * Copyright (c) 2026 Faux. Part of Horizon Server LODs; see LICENSE.
+ */
 package dev.faux.horizonlod;
 
 import java.io.ByteArrayOutputStream;
