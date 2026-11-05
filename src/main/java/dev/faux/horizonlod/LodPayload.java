@@ -1,3 +1,10 @@
+/*
+ * SPDX-License-Identifier: MIT
+ * Copyright (c) 2026 Faux
+ * Copyright (c) 2026 Ludovic Marie and the Horizon contributors
+ * Part of Horizon Server LODs. Follows Horizon's lod.rs and lod_net.rs
+ * (https://github.com/horizon-rust/horizon, MIT); see LICENSE.
+ */
 package dev.faux.horizonlod;
 
 import net.minecraft.network.FriendlyByteBuf;
