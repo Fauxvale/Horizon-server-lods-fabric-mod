@@ -1,80 +1,93 @@
 # Horizon Server LODs
 
-A server-side Fabric mod for Minecraft 26.3 that sends [Horizon](https://github.com/horizon-rust/horizon)
-clients far terrain (LODs) from the chunks the server has already generated. Whatever generated
-them, vanilla, a datapack like Continents or a world generation mod, the far terrain is the
-server's own world, not a guess from the seed.
+A server-side Fabric mod for Minecraft 26.3. It lets [Horizon](https://github.com/horizon-rust/horizon)
+players see far terrain (LODs) well past their render distance.
 
-Players with the vanilla client, or with Horizon builds that don't support it, notice nothing
-in game. Every player's F3 screen shows the server brand as `horizon` (see below).
+The far terrain comes from chunks your server has already generated, so it matches your real
+world. It works no matter what generated the world: vanilla, a datapack like Continents, or a
+world generation mod.
+
+Players on the vanilla client, or on Horizon builds without far terrain, won't notice anything.
 
 ## Install
 
 1. Put `horizon-server-lods-<version>.jar` and Fabric API in the server's `mods/` folder.
-2. Start the server. It writes `config/horizon-lod.properties`.
-3. In Horizon, turn on LOD Distance (Video Settings). Far terrain fills in as tiles arrive.
+2. Start the server. It creates `config/horizon-lod.properties`.
+3. In Horizon, go to **Video Settings** and turn on **LOD Distance**. Far terrain fills in as it
+   arrives.
 
-Only chunks that exist are sent, so pregenerate the area you want visible (for example with
-[Chunky](https://modrinth.com/plugin/chunky)). Chunks are read from disk, so changes show in far
-terrain after the server saves them (autosave, or `save-all`).
+**Good to know:**
+
+- Only chunks that already exist are sent. Pregenerate the area you want visible, for example
+  with [Chunky](https://modrinth.com/plugin/chunky).
+- Far terrain is read from the saved world. Builds and other changes show up after the server
+  saves (autosave, or `/save-all`).
+- The F3 screen shows the server brand as `horizon` for every player. That's expected (see below).
 
 ## How it works
 
-- **Horizon's own protocol.** Since 0.5 the mod speaks Horizon's built-in far-terrain protocol
-  (`lod_net` version 1, the one Horizon's own dedicated server speaks), so a stock Horizon client
-  draws the server's far terrain with no client mod. Horizon clients only identify themselves to
-  a server whose brand is exactly `horizon`, so the mod sets the server brand to `horizon` (F3
-  shows it to every player), and offers far terrain to the clients that answer as Horizon while
-  they join.
-- **Light on the server.** Tiles are read and summarized on low-priority threads (`threads`),
-  straight from the region files with a read-only reader, not through the server's own chunk IO
-  queue, so far terrain never waits behind (or holds up) the game's chunk loads and saves. Only
-  chunks from an older Minecraft version (which need datafixing) go through the server's reader.
-  Each player is held to a request rate (`tiles-per-second-per-player`, also sent to the client
-  so it paces itself), a few tiles at once and a byte budget per tick. Players who choose
-  Reduced far detail get corner samples, which cost less to make.
-- **No disk storage by default.** Finished tiles are kept in memory (`reply-cache-mb`) until one
-  of their chunks is saved again, so another player, or a rejoin, costs a few lookups.
-  Nothing is written to the world. The 0.4 summary cache (`horizon-lod/` in each dimension's
-  folder, about 8 KB per chunk) is still read and written with `summary-cache=true`; updating
-  from 0.4 turns it off once, and those folders, and `<world>/horizon-lod/`, can be deleted
-  (stop the server first).
-- **Server tick time.** Clients that ask on `faux:tick_stats` get the server's MSPT and tick
-  rate once a second (Fauxclient's MiniHUD shows them; `send-tick-stats`).
+**No client mod needed.** The mod speaks Horizon's built-in far-terrain protocol (`lod_net`
+version 1, the same one Horizon's own server uses). A stock Horizon client draws the far terrain
+on its own.
 
-## Settings (`config/horizon-lod.properties`)
+**Why the brand says `horizon`.** Horizon clients only identify themselves to a server whose
+brand is exactly `horizon`. The mod sets that brand so it can find the Horizon players as they
+join.
 
-| Key | Default | |
+**Light on the server.**
+- Chunks are read on low-priority background threads, straight from the region files, so far
+  terrain never slows down normal chunk loading or saving.
+- Each player has a limit on requests per second, tiles at once, and bytes per tick.
+- Players who pick **Reduced** far detail get cheaper, lower-detail tiles.
+
+**Nothing written to disk.** Finished tiles are kept in memory and reused until one of their
+chunks changes, so a second player or a rejoin costs almost nothing.
+
+**Updating from 0.4?** 0.4 kept a cache on disk (a `horizon-lod/` folder in each dimension's
+folder, about 8 KB per chunk). Updating turns it off. Stop the server, then delete those folders.
+To keep using it instead, set `summary-cache=true`.
+
+**Tick stats (optional).** Clients that ask on `faux:tick_stats` get the server's MSPT and tick
+rate once a second. Fauxclient's MiniHUD shows these.
+
+## Settings
+
+All settings live in `config/horizon-lod.properties`. The defaults suit most servers.
+
+| Setting | Default | What it does |
 |---|---|---|
-| `distance-chunks` | 512 | Far terrain is sent up to this many chunks from the player (at most 1024) |
-| `threads` | 2 | Threads reading and summarizing chunks |
-| `tiles-in-flight-per-player` | 8 | Tiles in the works per player at once (sent to the client) |
-| `tiles-per-second-per-player` | 32 | Tiles a player may ask for each second, on average (sent to the client; bursts of four times that) |
-| `max-queued-per-player` | 2048 | Requests a player may have waiting |
-| `bytes-per-tick-per-player` | 65536 | Tile bytes per player per tick, before network compression |
-| `cached-chunks-per-level` | 2048 | Chunk summaries kept in memory per dimension |
-| `reply-cache-mb` | 64 | Memory for finished tiles, shared by all players (0: off) |
-| `summary-cache` | false | Keep chunk summaries on disk (`horizon-lod/` in each dimension's folder), as 0.4 did |
-| `summarize-loaded-chunks-per-tick` | 4 | With `summary-cache`, chunks players load summarized per tick in the background (0: off) |
-| `send-tick-stats` | true | Answer `faux:tick_stats` with the server's MSPT and tick rate once a second |
+| `distance-chunks` | 512 | How far far terrain reaches, in chunks (max 1024) |
+| `threads` | 2 | Background threads that read chunks |
+| `tiles-in-flight-per-player` | 8 | Tiles being prepared for one player at once |
+| `tiles-per-second-per-player` | 32 | Average tiles a player can request per second (short bursts up to 4×) |
+| `max-queued-per-player` | 2048 | Requests a player can have waiting |
+| `bytes-per-tick-per-player` | 65536 | Data sent to one player per tick, before compression |
+| `cached-chunks-per-level` | 2048 | Chunk summaries kept in memory, per dimension |
+| `reply-cache-mb` | 64 | Memory for finished tiles, shared by all players (0 = off) |
+| `summary-cache` | false | Keep the 0.4 disk cache in each dimension's `horizon-lod/` folder |
+| `summarize-loaded-chunks-per-tick` | 4 | With `summary-cache` on: chunks to cache per tick as players load them (0 = off) |
+| `send-tick-stats` | true | Send MSPT and tick rate to clients that ask |
 
-## Build
+## Building from source
 
 Needs JDK 25.
 
 ```sh
-./gradlew build          # build/libs/horizon-server-lods-<version>.jar
-./gradlew runServer      # a test server in run/ with the mod
+./gradlew build          # output: build/libs/horizon-server-lods-<version>.jar
+./gradlew runServer      # starts a test server in run/ with the mod
 ```
 
-The wire format is in [PROTOCOL.md](PROTOCOL.md). The client side of far terrain is Horizon
-itself (`crates/horizon-client/src/lod_net.rs`); `faux:tick_stats` is read by Fauxclient's
-`faux_minihud_extra` bundle.
+The network format is documented in [PROTOCOL.md](PROTOCOL.md). On the client side, far terrain
+is handled by Horizon itself (`crates/horizon-client/src/lod_net.rs`), and `faux:tick_stats` by
+Fauxclient's `faux_minihud_extra` bundle.
 
 ## License
 
-[MIT](LICENSE). The far-terrain column summaries and tile replies (`Columns.java`, `Tiles.java`,
-`HorizonLod.java`, `LodPayload.java`) follow Horizon's MIT-licensed `lod.rs` and `lod_net.rs`, whose
-notice (Ludovic Marie and the Horizon contributors) is kept in the licence and in those files. Unofficial:
-not affiliated with Mojang, Microsoft or the Horizon project. Built against Minecraft and Fabric
-API, neither of which is included.
+[MIT](LICENSE).
+
+`Columns.java`, `Tiles.java`, `HorizonLod.java` and `LodPayload.java` are based on Horizon's
+MIT-licensed `lod.rs` and `lod_net.rs`. Horizon's notice (Ludovic Marie and the Horizon
+contributors) is kept in the licence and in those files.
+
+This is an unofficial mod, not affiliated with Mojang, Microsoft or the Horizon project. It is
+built against Minecraft and Fabric API, but includes neither.
