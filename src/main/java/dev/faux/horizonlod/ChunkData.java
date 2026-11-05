@@ -1,11 +1,16 @@
 package dev.faux.horizonlod;
 
 import com.mojang.serialization.Codec;
-import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import net.minecraft.core.Registry;
+import net.minecraft.core.SectionPos;
+import net.minecraft.server.level.ServerLevel;
+import net.minecraft.world.level.LightLayer;
+import net.minecraft.world.level.chunk.DataLayer;
+import net.minecraft.world.level.chunk.LevelChunk;
+import net.minecraft.world.level.chunk.LevelChunkSection;
 import net.minecraft.nbt.CompoundTag;
 import net.minecraft.nbt.ListTag;
 import net.minecraft.nbt.NbtOps;
@@ -67,6 +72,30 @@ final class ChunkData {
 		return (data[index >> 1] >> ((index & 1) << 2)) & 15;
 	}
 
+	/** A loaded chunk's sections and light, copied on the server thread for a LOD thread. */
+	record Snapshot(LevelChunkSection[] sections, DataLayer[] sky, DataLayer[] block) {
+		/** On the server thread: cheap copies (paletted containers and nibble arrays). */
+		static Snapshot of(ServerLevel level, LevelChunk chunk) {
+			LevelChunkSection[] live = chunk.getSections();
+			LevelChunkSection[] sections = new LevelChunkSection[live.length];
+			DataLayer[] sky = new DataLayer[live.length];
+			DataLayer[] block = new DataLayer[live.length];
+			var skyLight = level.getLightEngine().getLayerListener(LightLayer.SKY);
+			var blockLight = level.getLightEngine().getLayerListener(LightLayer.BLOCK);
+			int bottom = level.getMinY() >> 4;
+			int cx = chunk.getPos().x(), cz = chunk.getPos().z();
+			for (int i = 0; i < live.length; i++) {
+				sections[i] = live[i] == null ? null : live[i].copy();
+				SectionPos pos = SectionPos.of(cx, bottom + i, cz);
+				DataLayer s = skyLight.getDataLayerData(pos);
+				DataLayer b = blockLight.getDataLayerData(pos);
+				sky[i] = s == null ? null : s.copy();
+				block[i] = b == null ? null : b.copy();
+			}
+			return new Snapshot(sections, sky, block);
+		}
+	}
+
 	private static final Codec<List<BlockState>> PALETTE = BlockState.CODEC.listOf();
 
 	/** Reads the block states and biome ids of a level's chunks, caching biome ids. */
@@ -75,7 +104,7 @@ final class ChunkData {
 		private final int minY;
 		private final int sections;
 		private final boolean hasSky;
-		private final Map<String, Integer> biomeIds = new HashMap<>();
+		private final Map<String, Integer> biomeIds = new java.util.concurrent.ConcurrentHashMap<>();
 
 		Decoder(Registry<Biome> biomes, int minY, int height, boolean hasSky) {
 			this.biomeRegistry = biomes;
@@ -84,8 +113,8 @@ final class ChunkData {
 			this.hasSky = hasSky;
 		}
 
-		/** The chunk, or empty when it isn't fully generated. */
-		synchronized Optional<ChunkData> decode(CompoundTag root) {
+		/** The chunk, or empty when it isn't fully generated. Safe from any thread. */
+		Optional<ChunkData> decode(CompoundTag root) {
 			String status = root.getStringOr("Status", "");
 			if (!status.equals("minecraft:full") && !status.equals("full")) return Optional.empty();
 			ChunkData chunk = new ChunkData(minY, sections, hasSky);
@@ -100,6 +129,45 @@ final class ChunkData {
 				section.getByteArray("BlockLight").filter(a -> a.length == 2048).ifPresent(a -> chunk.block[index] = a);
 			}
 			return Optional.of(chunk);
+		}
+
+		/**
+		 * A loaded chunk from copies of its sections and light ({@link Snapshot}, taken on the
+		 * server thread), on a LOD thread: no disk read, no NBT, no datafixing.
+		 */
+		ChunkData fromSnapshot(Snapshot snapshot) {
+			ChunkData chunk = new ChunkData(minY, sections, hasSky);
+			int count = Math.min(sections, snapshot.sections().length);
+			for (int i = 0; i < count; i++) {
+				LevelChunkSection section = snapshot.sections()[i];
+				if (section != null && !section.hasOnlyAir()) {
+					int[] ids = new int[4096];
+					for (int y = 0; y < 16; y++) {
+						for (int z = 0; z < 16; z++) {
+							for (int x = 0; x < 16; x++) {
+								ids[(y << 8) | (z << 4) | x] = Block.BLOCK_STATE_REGISTRY.getId(section.getBlockState(x, y, z));
+							}
+						}
+					}
+					chunk.states[i] = ids;
+				}
+				if (section != null) {
+					int[] cells = new int[64];
+					for (int y = 0; y < 4; y++) {
+						for (int z = 0; z < 4; z++) {
+							for (int x = 0; x < 4; x++) {
+								cells[(y << 4) | (z << 2) | x] = biomeRegistry.getId(section.getNoiseBiome(x, y, z).value());
+							}
+						}
+					}
+					chunk.biomes[i] = cells;
+				}
+				DataLayer sky = snapshot.sky()[i];
+				if (sky != null) chunk.sky[i] = sky.getData();
+				DataLayer block = snapshot.block()[i];
+				if (block != null) chunk.block[i] = block.getData();
+			}
+			return chunk;
 		}
 
 		private int[] blockStates(CompoundTag container) {

@@ -3,12 +3,16 @@
 	"id": "horizon-lod",
 	"version": "${version}",
 	"name": "Horizon Server LODs",
-	"description": "Sends Horizon clients far terrain from the chunks this server has already generated, whatever generated them.",
-	"authors": ["Faux"],
+	"description": "Sends Horizon clients far terrain (Horizon's own lod_net protocol) from the chunks this server has already generated, whatever generated them.",
+	"authors": [
+		"Faux"
+	],
 	"license": "MIT",
 	"environment": "*",
 	"entrypoints": {
-		"main": ["dev.faux.horizonlod.HorizonLod"]
+		"main": [
+			"dev.faux.horizonlod.HorizonLod"
+		]
 	},
 	"accessWidener": "horizon-lod.accesswidener",
 	"depends": {
@@ -16,5 +20,8 @@
 		"minecraft": "~26.3",
 		"java": ">=25",
 		"fabric-api": "*"
-	}
+	},
+	"mixins": [
+		"horizon-lod.mixins.json"
+	]
 }

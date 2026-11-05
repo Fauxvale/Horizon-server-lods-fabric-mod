@@ -35,18 +35,33 @@ final class SummaryStore {
 
 	private final Path regions;
 	/** Null when summaries aren't kept ({@code summary-cache=false}): only the timestamps are read. */
-	private final RegionFileStorage storage;
+	private final RegionStorageInfo info;
+	private final Path folder;
+	/** One storage per summary region file, each its own lock: workers on different regions never wait on each other. */
+	private final Map<Long, RegionFileStorage> storages = new ConcurrentHashMap<>();
 	private final ExecutorService writer;
 	private final Map<Long, Header> headers = new ConcurrentHashMap<>();
 
-	/** A level region file's chunk timestamps, as of its modification time. */
-	private record Header(long modified, int[] timestamps) {}
+	/** A level region file's chunk timestamps, as of its modification time, last looked at {@code checked}. */
+	private static final class Header {
+		final long modified;
+		final int[] timestamps;
+		volatile long checked;
+
+		Header(long modified, int[] timestamps, long checked) {
+			this.modified = modified;
+			this.timestamps = timestamps;
+			this.checked = checked;
+		}
+	}
+
+	/** How long a region header's timestamps are trusted before the file's mtime is looked at again. */
+	private static final long RECHECK_MS = 1000;
 
 	SummaryStore(Path dimension, String levelName, ResourceKey<net.minecraft.world.level.Level> key, boolean keep) {
 		this.regions = dimension.resolve("region");
-		this.storage = keep
-				? new RegionFileStorage(new RegionStorageInfo(levelName, key, "horizon_lod"), dimension.resolve("horizon-lod"), false)
-				: null;
+		this.info = keep ? new RegionStorageInfo(levelName, key, "horizon_lod") : null;
+		this.folder = dimension.resolve("horizon-lod");
 		this.writer = Executors.newSingleThreadExecutor(task -> {
 			Thread thread = new Thread(task, "Horizon LOD store");
 			thread.setDaemon(true);
@@ -60,6 +75,9 @@ final class SummaryStore {
 		int rx = x >> 5, rz = z >> 5;
 		Path file = regions.resolve("r." + rx + "." + rz + ".mca");
 		long key = ChunkPos.pack(rx, rz);
+		long now = System.currentTimeMillis();
+		Header known = headers.get(key);
+		if (known != null && now - known.checked < RECHECK_MS) return known.timestamps[(x & 31) + (z & 31) * 32];
 		try {
 			if (!Files.exists(file)) {
 				headers.remove(key);
@@ -68,8 +86,10 @@ final class SummaryStore {
 			long modified = Files.getLastModifiedTime(file).toMillis();
 			Header header = headers.get(key);
 			if (header == null || header.modified != modified) {
-				header = new Header(modified, readTimestamps(file));
+				header = new Header(modified, readTimestamps(file), now);
 				headers.put(key, header);
+			} else {
+				header.checked = now;
 			}
 			return header.timestamps[(x & 31) + (z & 31) * 32];
 		} catch (IOException e) {
@@ -97,18 +117,14 @@ final class SummaryStore {
 		return parse(tag);
 	}
 
-	/** A summary read whatever its timestamp: its columns (null if none), and whether its format is old. */
-	record Kept(Columns.Column[] columns, boolean stale) {}
-
-	/** The kept columns of chunk x, z, however old (but in this format). */
-	Kept readAny(int x, int z) {
-		CompoundTag tag = tag(x, z);
-		if (tag == null) return new Kept(null, false);
-		if (tag.getIntOr("format", 1) != FORMAT) return new Kept(null, true);
-		return new Kept(parse(tag).flatMap(columns -> columns).orElse(null), false);
+	/** The storage of chunk x, z's summary region; null when summaries aren't kept. */
+	private RegionFileStorage storage(int x, int z) {
+		if (info == null) return null;
+		return storages.computeIfAbsent(ChunkPos.pack(x >> 5, z >> 5), r -> new RegionFileStorage(info, folder, false));
 	}
 
 	private CompoundTag tag(int x, int z) {
+		RegionFileStorage storage = storage(x, z);
 		if (storage == null) return null;
 		try {
 			synchronized (storage) {
@@ -135,6 +151,7 @@ final class SummaryStore {
 
 	/** Keeps chunk x, z's summary (empty for a chunk that wasn't full), on the store's thread. */
 	void write(int x, int z, int timestamp, Optional<Columns.Column[]> columns) {
+		RegionFileStorage storage = storage(x, z);
 		if (storage == null) return;
 		CompoundTag tag = new CompoundTag();
 		tag.putInt("timestamp", timestamp);
@@ -169,13 +186,14 @@ final class SummaryStore {
 		} catch (InterruptedException e) {
 			Thread.currentThread().interrupt();
 		}
-		if (storage == null) return;
-		try {
-			synchronized (storage) {
-				storage.close();
+		for (RegionFileStorage storage : storages.values()) {
+			try {
+				synchronized (storage) {
+					storage.close();
+				}
+			} catch (IOException e) {
+				LOG.warn("Horizon LOD: could not close the summary store", e);
 			}
-		} catch (IOException e) {
-			LOG.warn("Horizon LOD: could not close the summary store", e);
 		}
 	}
 }

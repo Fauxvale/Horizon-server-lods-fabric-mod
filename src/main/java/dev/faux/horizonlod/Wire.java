@@ -34,6 +34,10 @@ final class Wire {
 			throw new IllegalArgumentException("VarInt too long");
 		}
 
+		int i32() {
+			return (u8() << 24) | (u8() << 16) | (u8() << 8) | u8();
+		}
+
 		int i16() {
 			return (short) ((u8() << 8) | u8());
 		}
